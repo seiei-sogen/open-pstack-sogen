@@ -11,7 +11,17 @@
 
 # bun deps for the vendored poteto-mode scripts (bootstrap.ts installs them on first run)
 plugins/pstack/skills/poteto-mode/scripts/node_modules/
+<<<<<<< ours
 .claude/.headroom_wrap_marker.json
 .claude/.headroom_wrap_owners.json
 .claude/.headroom_wrap_settings.lock
 .serena/
+
+||||||| base
+
+=======
+
+# Non-shipped repository verification helper dependencies
+.claude/skills/verify-open-pstack/node_modules/
+
+>>>>>>> theirs

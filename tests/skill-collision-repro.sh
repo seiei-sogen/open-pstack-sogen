@@ -48,12 +48,13 @@ fi
 # Active configuration must use Claude's rolling family aliases. Concrete
 # provider reports may still appear in runner fixtures, but no shipped
 # descriptor, native-agent model field, or live test invocation may pin one.
+# The registry's released pairs record old pins so they keep resolving to their family.
 legacy_model_pins="$(
   grep -REn \
     --include='*.md' --include='*.ts' --include='*.sh' \
     'claude:claude-(fable|opus)-[0-9]|^model: claude-(fable|opus)-[0-9]|--model claude-(fable|opus)-[0-9]' \
     "$repo/plugins/pstack" "$repo/tests" "$repo/README.md" "$repo/docs/reference.md" \
-    2>/dev/null || true
+    2>/dev/null | grep -Ev '^[^:]*/skills/poteto-mode/scripts/runner/registry/models\.ts:[0-9]+:  \{ pair: "claude:claude-(fable|opus)-[0-9]+", family: "(fable|opus)" \},$' || true
 )"
 standalone_code_pins="$(
   grep -REn \
@@ -72,66 +73,118 @@ else
   note "ok: active Fable and Opus configuration uses rolling aliases"
 fi
 
-# Static invariant (CHANGES maintenance note): provider-dispatch owns the default
-# provider/model quad and the three panel skills plus setup-pstack copy it verbatim.
+# Static invariant (CHANGES maintenance note): setup-pstack's first-run `arena runners`
+# row is the default panel. The other panel rows and the arena, architect, and
+# interrogate defaults copy it verbatim.
 setup="$repo/plugins/pstack/skills/setup-pstack/SKILL.md"
 dispatch="$repo/plugins/pstack/skills/poteto-mode/references/provider-dispatch.md"
-quad_of() { { grep -oE '(claude|codex|grok):[a-z0-9.-]+@(low|medium|high|xhigh|max)' || true; } | tr '\n' ' ' | sed 's/ $//'; }
-canon_quad="$(awk '
-  $0 == "## Model matrix" { in_matrix = 1; next }
-  in_matrix && /^## / { exit }
-  in_matrix && /^\|/ {
-    line = $0
-    sub(/^\|/, "", line)
-    sub(/\|$/, "", line)
-    n = split(line, cells, "|")
-    for (i = 1; i <= n; i++) {
-      gsub(/^ +| +$/, "", cells[i])
-      gsub(/`/, "", cells[i])
-    }
-    family = cells[1]
-    if (family == "Family" || family ~ /^:?-+:?$/) next
-    provider = cells[3]
-    model = cells[4]
-    effort = cells[5]
-    if (out != "") out = out " "
-    out = out provider ":" model "@" effort
-  }
-  END { print out }
-' "$dispatch")"
-quad_bad=""
-[ -n "$canon_quad" ] || quad_bad="could not read the canonical quad from $dispatch"$'\n'
-# Anchor on the quad's last slug rather than a hard-coded one, so a model swap in
+
+# Config-home port invariant (#120): guard upstream merges against daily-home writes.
+config_mapping="$repo/plugins/pstack/skills/poteto-mode/references/codex-tools.md"
+config_home_bad=""
+# The legacy import is rendered text, not a hard-coded write destination.
+if sed 's|@~/.claude/pstack-models.md||g' "$setup" | grep -nE '~/(\.claude|\.codex)|\$HOME/(\.claude|\.codex)'; then
+  config_home_bad="setup still names a literal default config path outside the legacy import"$'\n'
+fi
+for source in "$setup" "$config_mapping"; do
+  grep -Fxq '@~/.claude/pstack-models.md' "$source" || config_home_bad="${config_home_bad}$source lacks the literal legacy default-home import"$'\n'
+  for rule in \
+    'When `<config-home>` is the default home, render exactly' \
+    'Only when `CLAUDE_CONFIG_DIR` redirects the home' \
+    'render exactly `@./pstack-models.md`' \
+    'basename is `pstack-models.md`' \
+    'On a rerun, replace that one line in place, preserving all unrelated bytes.' \
+    'If zero matching import lines exist, append one.' \
+    'If more than one exists, stop and report inconsistent state before either write'; do
+    grep -Fq "$rule" "$source" || config_home_bad="${config_home_bad}$source lacks Claude import rule: $rule"$'\n'
+  done
+  if grep -nE 'backslash|space-escaped|absolute resolved' "$source"; then
+    config_home_bad="${config_home_bad}$source still specifies absolute or escaped Claude imports"$'\n'
+  fi
+done
+grep -Fq 'require an explicit source choice before normalization or probing' "$setup" || config_home_bad="${config_home_bad}setup does not require explicit source selection before normalization or probing"$'\n'
+grep -Fq '[harness config-home rule](../poteto-mode/references/codex-tools.md#harness-config-homes)' "$setup" || config_home_bad="${config_home_bad}setup does not reference the canonical config-home rule"$'\n'
+for expression in '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"' '"${CODEX_HOME:-$HOME/.codex}"'; do
+  grep -Fxq "$expression" "$config_mapping" || config_home_bad="${config_home_bad}mapping lacks quoted nonempty/default resolution: $expression"$'\n'
+done
+for target in pstack-models.md CLAUDE.md AGENTS.md; do
+  grep -Fq "<config-home>/$target" "$setup" || config_home_bad="${config_home_bad}setup does not resolve $target through config-home"$'\n'
+done
+# Resolution only: keep real HOME/USER and never write default or daily targets.
+if ! (
+  unset CLAUDE_CONFIG_DIR CODEX_HOME
+  [ "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" = "$HOME/.claude" ] &&
+  [ "${CODEX_HOME:-$HOME/.codex}" = "$HOME/.codex" ] || exit 1
+  CLAUDE_CONFIG_DIR="" CODEX_HOME=""
+  [ "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" = "$HOME/.claude" ] &&
+  [ "${CODEX_HOME:-$HOME/.codex}" = "$HOME/.codex" ] || exit 1
+  CLAUDE_CONFIG_DIR="/tmp/pstack claude # config" CODEX_HOME="/tmp/pstack codex # config"
+  [ "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" = "/tmp/pstack claude # config" ] &&
+  [ "${CODEX_HOME:-$HOME/.codex}" = "/tmp/pstack codex # config" ]
+); then
+  config_home_bad="${config_home_bad}unset, empty, or space-containing resolution changed"$'\n'
+fi
+if [ -n "$config_home_bad" ]; then
+  note "FAIL: setup config-home port invariant regressed:"
+  note "$config_home_bad"
+  fail=1
+else
+  note "ok: setup config-home port invariant; unset/empty defaults and spaced overrides resolve without writes"
+fi
+
+quad_of() { { grep -oE '(claude|codex|grok):[a-z0-9.-]+@(low|medium|high|xhigh|max|ultra)' || true; } | tr '\n' ' ' | sed 's/ $//'; }
+canon_panel="$( { grep -m1 '^arena runners:' "$setup" || true; } | quad_of)"
+panel_bad=""
+[ -n "$canon_panel" ] || panel_bad="could not read the canonical panel from $setup"$'\n'
+# Anchor on the panel's last slug rather than a hard-coded one, so a model swap in
 # setup-pstack cannot leave this check hunting for a slug nobody ships any more.
-anchor="${canon_quad##* }"
-# arena and architect each state the quad on one line; interrogate lists it
-# as one slug per row of its Reviewer A/B/C/D table (upstream #167).
+anchor="${canon_panel##* }"
+# arena and architect each state the panel on one line; interrogate lists it
+# as one slug per row of its Reviewer A/B/C table (upstream #167).
 for name in arena architect; do
   skill="$repo/plugins/pstack/skills/$name/SKILL.md"
   n="$(grep -Fc "$anchor" "$skill" || true)"
   if [ "$n" != "1" ]; then
-    quad_bad="$quad_bad$skill: expected exactly 1 default-quad line, found $n"$'\n'
+    panel_bad="$panel_bad$skill: expected exactly 1 default-panel line, found $n"$'\n'
     continue
   fi
   got="$(grep -F "$anchor" "$skill" | quad_of)"
-  [ "$got" = "$canon_quad" ] || quad_bad="$quad_bad$skill: [$got] != [$canon_quad]"$'\n'
+  [ "$got" = "$canon_panel" ] || panel_bad="$panel_bad$skill: [$got] != [$canon_panel]"$'\n'
 done
 interrogate="$repo/plugins/pstack/skills/interrogate/SKILL.md"
 got="$(grep -E '^\| Reviewer [A-Z] \|' "$interrogate" | quad_of)"
-[ "$got" = "$canon_quad" ] || quad_bad="$quad_bad$interrogate reviewer table: [$got] != [$canon_quad]"$'\n'
+[ "$got" = "$canon_panel" ] || panel_bad="$panel_bad$interrogate reviewer table: [$got] != [$canon_panel]"$'\n'
 while IFS= read -r line; do
   got="$(printf '%s\n' "$line" | quad_of)"
-  [ "$got" = "$canon_quad" ] || quad_bad="$quad_bad$setup role row: [$got] != [$canon_quad]"$'\n'
+  [ "$got" = "$canon_panel" ] || panel_bad="$panel_bad$setup role row: [$got] != [$canon_panel]"$'\n'
 done < <(grep -E '^(arena runners|arena cross-judge pool|architect runners|interrogate reviewers):' "$setup")
-if [ -n "$quad_bad" ]; then
-  note "FAIL: the default model quad is not identical across provider dispatch, the panel skills, and setup-pstack:"
-  note "$quad_bad"
+if [ -n "$panel_bad" ]; then
+  note "FAIL: the default model panel is not identical across provider dispatch, the panel skills, and setup-pstack:"
+  note "$panel_bad"
   fail=1
 else
-  note "ok: default model quad identical across provider dispatch + 3 panel skills + setup-pstack ($canon_quad)"
+  note "ok: default model panel identical across provider dispatch + 3 panel skills + setup-pstack ($canon_panel)"
 fi
 
 plugin="$repo/plugins/pstack"
+
+poteto_agent="$plugin/agents/poteto-agent.md"
+poteto_agent_front="$(sed -n '2,/^---$/p' "$poteto_agent")"
+poteto_preload_bad=""
+if [ "$(printf '%s\n' "$poteto_agent_front" | grep -cx 'skills:' || true)" != "1" ]; then
+  poteto_preload_bad="${poteto_agent} must declare one skills list"$'\n'
+fi
+if [ "$(printf '%s\n' "$poteto_agent_front" | grep -cx '  - pstack:poteto-mode' || true)" != "1" ]; then
+  poteto_preload_bad="${poteto_preload_bad}${poteto_agent} must preload pstack:poteto-mode"$'\n'
+fi
+if [ -n "$poteto_preload_bad" ]; then
+  note "FAIL: Claude poteto-agent does not preload poteto-mode:"
+  note "$poteto_preload_bad"
+  fail=1
+else
+  note "ok: Claude poteto-agent preloads poteto-mode"
+fi
+
 canon="$plugin/skills/poteto-mode/references/bugbot-triage.md"
 skill="$plugin/skills/babysit/SKILL.md"
 playbook="$plugin/skills/poteto-mode/playbooks/babysit.md"
@@ -400,6 +453,45 @@ else
   note "ok: codex logo path resolves"
 fi
 
+verification="$repo/.claude/skills/verify-open-pstack"
+verification_bad=""
+if [ ! -L "$repo/.agents/skills/verify-open-pstack" ] ||
+   [ "$(readlink "$repo/.agents/skills/verify-open-pstack" 2>/dev/null || true)" != "../../.claude/skills/verify-open-pstack" ]; then
+  verification_bad="Codex must link to the canonical Claude project skill"
+fi
+for section in Launch Doctor Drive Evidence Cleanup Helpers; do
+  grep -q "^## $section$" "$verification/SKILL.md" || verification_bad="$verification_bad missing $section;"
+done
+for file in features/registry.json features/README.md package.json bun.lock tsconfig.json; do
+  [ -f "$verification/$file" ] || verification_bad="$verification_bad missing $file;"
+done
+[ -x "$verification/scripts/verify.sh" ] || verification_bad="$verification_bad helper is not executable;"
+if [ -e "$plugin/skills/verify-open-pstack" ] || [ -e "$plugin/commands/verify-open-pstack.md" ]; then
+  verification_bad="$verification_bad project verifier must not ship in the plugin;"
+fi
+if [ -n "$verification_bad" ]; then
+  note "FAIL: repository-local verification skill: $verification_bad"
+  fail=1
+else
+  note "ok: shared project verification skill has executable helper and maintained feature map"
+fi
+
+if release_out="$(python3 "$repo/scripts/release_test.py" 2>&1 && python3 "$repo/scripts/release.py" notes 2>&1 >/dev/null)"; then
+  note "ok: release notes build from the CHANGES.md section for the manifest version ($vc)"
+else
+  note "FAIL: release notes do not build"
+  note "$release_out"
+  fail=1
+fi
+
+note "Checking non-shipped verification helper"
+(
+  cd "$verification"
+  bun install --frozen-lockfile
+  bun run test
+  bun run typecheck
+)
+
 if [ "${PSTACK_STATIC_ONLY:-0}" = "1" ]; then
   exit "$fail"
 fi
@@ -436,5 +528,17 @@ invoke='Call the Skill tool with skill "testplug:foo" exactly once and follow wh
 
 check "model-initiated Skill-tool invocation" "SKILL-RAN" "$(run "$invoke")"
 check "user /testplug:foo invocation" "SKILL-RAN" "$(run '/testplug:foo')"
+
+preloaded_agent_output="$(
+  claude -p \
+    'Use the Agent tool once with subagent_type pstack:poteto-agent. Give it this task verbatim: "Without invoking Skill or reading files, reply with the first Core principle named in the preloaded poteto-mode skill." Return only the child response.' \
+    --plugin-dir "$plugin" \
+    --model fable \
+    --effort max \
+    --max-turns 5 \
+    --tools Agent \
+    < /dev/null 2>&1 || true
+)"
+check "poteto-agent preloaded skill" "Laziness Protocol" "$preloaded_agent_output"
 
 exit "$fail"
