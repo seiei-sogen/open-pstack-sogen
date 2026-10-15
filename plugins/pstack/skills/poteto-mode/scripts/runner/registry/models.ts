@@ -44,6 +44,53 @@ export const FAMILIES = [
     upstream: "opus",
     rolling: { revisionPrefix: "claude-opus-" },
   }),
+  family({
+    name: "luna",
+    label: "GPT-6 Luna",
+    provider: "codex",
+    model: "gpt-6-luna",
+    efforts: UP_TO_MAX, // no ultra in `codex debug models`, Codex CLI 0.159.0
+    defaultEffort: "max",
+    upstream: null,
+  }),
+  family({
+    name: "sonnet",
+    label: "Sonnet",
+    provider: "claude",
+    model: "sonnet",
+    efforts: UP_TO_MAX,
+    defaultEffort: "max",
+    upstream: null,
+    rolling: { revisionPrefix: "claude-sonnet-" },
+  }),
+  family({
+    name: "opus-5-5",
+    label: "Opus 5.5",
+    provider: "claude",
+    model: "claude-opus-5-5", // an exact pin: resolveModel matches it before the opus revision pattern
+    efforts: UP_TO_MAX,
+    defaultEffort: "max",
+    upstream: "claude-opus-5-5-xhigh",
+  }),
+  family({
+    name: "swe-2",
+    label: "SWE-2",
+    provider: "devin",
+    model: "swe-2",
+    // `devin models list --format json`, Devin CLI 3000.10.21: no low variant. The bare slug runs swe-2-max.
+    efforts: { medium: "swe-2-medium", high: "swe-2-high", max: "swe-2-max" },
+    defaultEffort: "max",
+    upstream: null,
+  }),
+  family({
+    name: "swe-1.6",
+    label: "SWE-1.6",
+    provider: "devin",
+    model: "swe-1.6",
+    efforts: { default: "swe-1-6" }, // the family's single variant
+    defaultEffort: "default",
+    upstream: null,
+  }),
 ] as const;
 export type FamilyName = (typeof FAMILIES)[number]["name"];
 
@@ -76,4 +123,9 @@ export const RELEASED_PAIRS = [
   { pair: "codex:gpt-6.1-sol", family: "sol" },
   { pair: "grok:grok-4.6", family: "grok" },
   { pair: "grok:grok-4.7", family: "grok" },
+  { pair: "codex:gpt-6-luna", family: "luna" },
+  { pair: "claude:sonnet", family: "sonnet" },
+  { pair: "claude:claude-opus-5-5", family: "opus-5-5" },
+  { pair: "devin:swe-2", family: "swe-2" },
+  { pair: "devin:swe-1.6", family: "swe-1.6" },
 ] as const satisfies readonly ReleasedPair<FamilyName>[];

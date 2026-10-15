@@ -1,6 +1,8 @@
 /** The two harnesses with a native subagent primitive, and the markers that identify each one. */
 export const PARENTS = {
   claude: {
+    harness: "Claude Code",
+    native: "Agent",
     identity: [
       "CLAUDECODE",
       "CLAUDE_CODE_CHILD_SESSION",
@@ -9,6 +11,8 @@ export const PARENTS = {
     ],
   },
   codex: {
+    harness: "Codex",
+    native: "spawn_agent",
     identity: [
       "CODEX_THREAD_ID",
       "CODEX_SESSION_ID",
@@ -23,10 +27,16 @@ export const PARENTS = {
 /** `default` passes no effort, so the CLI or model uses its own setting. */
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra", "default"] as const;
 export const ACCESS_MODES = ["read-only", "isolated-write"] as const;
+/** A writer's sandbox. `full-access` is an explicit opt-in from the model sheet, never a recovery step. */
+export const WRITER_SANDBOXES = ["bounded", "full-access"] as const;
+/** What an adapter's `launch.supports` lists: each access mode, and the full-access writer as its own capability. */
+export const ACCESS_KINDS = [...ACCESS_MODES, "isolated-write-full-access"] as const;
 
 export type Parent = keyof typeof PARENTS;
 export type Effort = (typeof EFFORTS)[number];
 export type AccessMode = (typeof ACCESS_MODES)[number];
+export type WriterSandbox = (typeof WRITER_SANDBOXES)[number];
+export type AccessKind = (typeof ACCESS_KINDS)[number];
 
 export type ReceiptStatus =
   | "complete"
@@ -55,6 +65,8 @@ export interface RunnerReceipt {
   readonly model: string;
   readonly effort: Effort;
   readonly mode: AccessMode;
+  /** Null for a read-only lane. */
+  readonly writerSandbox: WriterSandbox | null;
   readonly cwd: string;
   readonly promptPath: string;
   readonly outputPath: string;
@@ -94,6 +106,7 @@ export function evidence(value: string): string {
 
 export function modelFailureStatus(value: string): "unavailable-model" | "child-failed" {
   return /model.{0,40}(not found|unknown|unavailable|unsupported|not supported|invalid)|invalid.{0,20}model/i.test(value)
+      || /^Error: Unknown model: /m.test(value) // Devin CLI 3000.10.21
     ? "unavailable-model"
     : "child-failed";
 }
